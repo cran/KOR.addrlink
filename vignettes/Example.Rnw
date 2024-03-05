@@ -1,0 +1,143 @@
+\documentclass{article}
+%\VignetteIndexEntry{Example}
+\usepackage[utf8]{inputenc}
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+\title{Using KOR.addrlink}
+\author{Daniel Sch\"urmann}
+\date{February 29, 2024}
+\maketitle
+
+\section{Introduction}
+
+Consider a data set with semi-structured address data, e.g. street and house number as a concatenated string, 
+wrongly spelled street names or non-existing house numbers. This data set (referred to as df\_match) should be 
+mapped to a complete list of valid addresses within the given municipality. The latter data set is 
+called df\_ref and may include further information like coordinates of addresses or district information.
+KOR.addrlink tries to solve this problem specifically for German municipalities as the package is specialized 
+on German address schemes. 
+
+\section{Reference data}
+
+First, a complete list of reference addresses (df\_ref) is needed. An example 
+data.fame named "Adressen" is shown below. 
+
+<<>>=
+library(KOR.addrlink)
+Adressen[c(sample(which(is.na(Adressen$HNRZ)), 4), 
+	sample(which(!is.na(Adressen$HNRZ)), 2)),]
+@
+
+The columns used for the matching procedure are STRNAME (street name), HNR (house number) 
+and HNRZ (additional letter). This vignette illustrates the merging workflow on two sample data sets called df1 and df2. 
+
+\section{Example 1}
+df1 has address information in columns gross\_strasse and housnr. 
+The columns Var1 and Var2 provide non-address related information about 
+the individuals. Row 1183 shows that the column hausnr needs to be split 
+into house number and additional letter before addresses can be matched. 
+The function split\_number is provided for that task. 
+
+<<>>=
+df1[1180:(1183+6),]
+@
+
+split\_number takes hausnr and creates a data.frame with columns "Hausnummer" 
+(house number) and "Hausnummernzusatz" (additional letter). 
+
+<<>>=
+df1 <- cbind(df1, split_number(df1$hausnr))
+df1[1180:(1183+6),]
+@
+
+addrlink merges the two data sets. For both data sets, the columns referring 
+to steet name, house number and additional letter need to be specified 
+in exactly that order (parameter col\_ref and col\_match). 
+
+<<>>=
+# column hausnr is no longer needed
+df1 <- within(df1, rm(hausnr))
+df1_matched <- addrlink(df_ref = Adressen, 
+	col_ref = c("STRNAME", "HNR", "HNRZ"), 
+	df_match = df1, 
+	col_match = c("gross_strasse", "Hausnummer", "Hausnummernzusatz"))
+@
+
+The result is a list with two data.frames
+\begin{itemize}
+\item ret: The merged data set
+\item QA: Indicators showing the match quality
+\end{itemize}
+
+<<>>=
+head(df1_matched$ret)
+table(df1_matched$QA$qAddress)
+@
+
+qAdress states the stage within the matching procedure that yielded the match. 
+Out of the 10000 records, 9670 could be merged directly. 72 had a valid street 
+name, but an invalid house number. 157 records had (possibly) misspelled street 
+names and 101 records could not be matched at all. 
+
+\section{Example 2}
+
+The second data set has a single column "Adresse", which includes street names 
+and house numbers. Thus, this column needs to be split by the function 
+split\_address. 
+
+<<>>=
+head(within(df2, Adresse <- trimws(Adresse)))
+@
+
+split\_number creates a data.frame with columns "Strasse" (street) "Hausnummer" 
+(house number) and "Hausnummernzusatz" (additional letter) from the column 
+"Adresse". 
+
+<<>>=
+df2 <- cbind(df2, split_address(df2$Adresse))
+within(df2, Adresse <- trimws(Adresse))[23:(23+6),]
+@
+
+Again, addrlink merges the two data sets. The parameter fuzzy\_threshold 
+sets the threshold for fuzzy matching of misspelled street names. A value 
+of 1 means no fuzzy matching and 0 means forced fuzzy matches for all records. 
+If a steet name could be matched, but the provided house number does not exist, addrlink 
+may randomly assign a valid house number to that record. A seed is always set 
+to ensure reproducibility. Customization is possible via the parameter seed. 
+
+<<>>=
+# column Adresse is no longer needed
+df2 <- within(df2, rm(Adresse))
+df2_matched <- addrlink(df_ref = Adressen, 
+	col_ref = c("STRNAME", "HNR", "HNRZ"), 
+	df_match = df2, 
+	col_match = c("Strasse", "Hausnummer", "Hausnummernzusatz"), 
+	fuzzy_threshold = .9, seed = 1234)
+@
+
+<<>>=
+head(df2_matched$ret)
+table(df2_matched$QA$qAddress)
+@
+
+49 records had invalid house numbers and one record was matched by 
+fuzzy matching. This record can be inspected in detail. 
+
+<<>>=
+id <- which(df2_matched$QA$qAddress == 3) 
+df2_matched$ret[id,]
+df2_matched$QA[id,]
+@
+
+In this case the fuzzy matching procedure was most likely correct 
+(St.-Georg-Str. matched SANKT-GEORG-STRA{\ss}E).
+
+The number of cases with correct street name and randomly assigned house 
+numbers is 10.
+
+<<>>=
+sum(df2_matched$QA$qscore == 0) 
+@
+
+
+\end{document}
